@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dispatch — a Zoho Sign demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="masthead-mark">§</div>
+    <div>
+      <h1>Dispatch</h1>
+      <p class="tagline">Send a document out for signature, tracked from upload to signed.</p>
+    </div>
+  </header>
+
+  <main class="board">
+
+    <section class="panel form-panel">
+      <ol class="stage-track" id="stageTrack">
+        <li data-stage="upload" class="active"><span class="stage-dot"></span>Prepare</li>
+        <li data-stage="send"><span class="stage-dot"></span>Dispatch</li>
+        <li data-stage="track"><span class="stage-dot"></span>Track</li>
+      </ol>
+
+      <form id="sendForm">
+        <div class="field">
+          <label for="file">Document (PDF)</label>
+          <div class="file-drop" id="fileDrop">
+            <input type="file" id="file" name="file" accept="application/pdf" required />
+            <span id="fileLabel">Drop a PDF here, or click to choose one</span>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="requestName">Request name</label>
+            <input type="text" id="requestName" placeholder="e.g. Contractor Agreement" />
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="recipientName">Recipient name</label>
+            <input type="text" id="recipientName" required placeholder="Jordan Blake" />
+          </div>
+          <div class="field">
+            <label for="recipientEmail">Recipient email</label>
+            <input type="email" id="recipientEmail" required placeholder="jordan@example.com" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="notes">Note to recipient</label>
+          <textarea id="notes" rows="2" placeholder="Please review and sign at your earliest convenience.">Please review and sign at your earliest convenience.</textarea>
+        </div>
+
+        <div class="field-row checkbox-row">
+          <label class="checkbox">
+            <input type="checkbox" id="testing" checked />
+            <span>Use Zoho's free test mode (watermarked, no legal validity)</span>
+          </label>
+        </div>
+
+        <button type="submit" id="submitBtn">Send for signature</button>
+      </form>
+
+      <div id="statusMessage" class="status-message" hidden></div>
+    </section>
+
+    <aside class="panel side-panel">
+      <h2>How this works</h2>
+      <p class="side-copy">This demo calls the Zoho Sign API in two steps, same as the docs describe: it uploads your PDF to create a request, then submits that request with a recipient to send the signing email.</p>
+
+      <div class="lookup">
+        <h3>Check a request's status</h3>
+        <div class="lookup-row">
+          <input type="text" id="lookupId" placeholder="Request ID" />
+          <button id="lookupBtn" type="button">Check</button>
+        </div>
+        <pre id="lookupResult" class="lookup-result" hidden></pre>
+      </div>
+
+      <div class="server-note">
+        <h3>Server credentials</h3>
+        <p id="healthText">Checking connection…</p>
+      </div>
+    </aside>
+
+  </main>
+
+  <section class="panel dashboard-panel">
+    <div class="dashboard-head">
+      <h2>Tracking</h2>
+      <button id="refreshDashboardBtn" type="button" class="ghost-btn">Refresh</button>
+    </div>
+
+    <div class="stat-row" id="statRow">
+      <div class="stat-card">
+        <span class="stat-value" id="statSent">–</span>
+        <span class="stat-label">Documents sent</span>
+      </div>
+      <div class="stat-card stat-signed">
+        <span class="stat-value" id="statSigned">–</span>
+        <span class="stat-label">Signed</span>
+      </div>
+      <div class="stat-card stat-pending">
+        <span class="stat-value" id="statPending">–</span>
+        <span class="stat-label">Pending</span>
+      </div>
+      <div class="stat-card stat-declined">
+        <span class="stat-value" id="statDeclined">–</span>
+        <span class="stat-label">Declined</span>
+      </div>
+    </div>
+
+    <div class="grid-wrap">
+      <table class="grid-table" id="dashboardGrid">
+        <thead>
+          <tr>
+            <th>Document</th>
+            <th>Recipient</th>
+            <th>Status</th>
+            <th>Progress</th>
+            <th>Sent</th>
+          </tr>
+        </thead>
+        <tbody id="dashboardGridBody">
+          <tr><td colspan="5" class="grid-empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="foot">
+    Built against the <a href="https://www.zoho.com/sign/api/getting-started-with-zoho-sign-api.html" target="_blank" rel="noopener">Zoho Sign API</a>.
+  </footer>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
