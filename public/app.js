@@ -291,7 +291,13 @@ function renderFeedItem(event) {
   if (event.type === 'request_sent') {
     title = `Sent “${event.requestName}” to ${event.recipients.join(', ')}`;
   } else if (event.type === 'webhook') {
-    title = `Update: “${event.requestName || event.requestId}” → ${event.requestStatus || 'status changed'}`;
+    const recipients = event.recipients || [];
+    if (recipients.length) {
+      const parts = recipients.map((r) => `${r.name} (${formatActionStatus(r.status)})`);
+      title = `“${event.requestName || event.requestId}” — ${parts.join(', ')}`;
+    } else {
+      title = `Update: “${event.requestName || event.requestId}” → ${event.requestStatus || 'status changed'}`;
+    }
   } else {
     title = 'Activity received';
   }
@@ -299,6 +305,11 @@ function renderFeedItem(event) {
   const time = event.time ? new Date(event.time).toLocaleTimeString() : '';
   div.innerHTML = `<span class="feed-title">${title}</span><span class="feed-time">${time}</span>`;
   return div;
+}
+
+function formatActionStatus(status) {
+  const meta = STATUS_META[status];
+  return meta ? meta.label : status;
 }
 
 function addFeedItem(event) {

@@ -184,16 +184,18 @@ app.post('/api/send', upload.single('file'), async (req, res) => {
 
 /**
  * Receives real-time notifications from Zoho Sign when you configure a
- * webhook URL pointing here (Zoho Sign > Settings > look for a Webhooks /
- * Integrations section - as of this writing Zoho Sign doesn't document a
- * REST endpoint to register the webhook via API, only through the
- * dashboard). Needs a public HTTPS URL to actually receive traffic from
+ * webhook URL pointing here (Zoho Sign > Settings > Developer Settings >
+ * Webhooks). Needs a public HTTPS URL to actually receive traffic from
  * Zoho's servers - won't get hit on localhost without a tunnel like ngrok.
  *
- * We don't assume Zoho's exact payload shape here since it isn't fully
- * published - this pulls out whatever recognizable fields are present and
- * passes the rest through untouched, so nothing breaks if the shape
- * differs from what's expected.
+ * Zoho sends the full request object on every callback, same shape as
+ * GET /requests/{id} - including an `actions[]` array with each
+ * recipient's current action_status (UNOPENED/VIEWED/SIGNED/DECLINED/...).
+ * The top-level `request_status` field only reflects the *overall*
+ * document (e.g. stays "inprogress" for the entire signing process), so
+ * relying on it alone produces identical, uninformative feed entries even
+ * as real per-recipient events happen. We read the actions array to
+ * surface what actually changed.
  */
 app.post('/webhooks/zoho-sign', (req, res) => {
   let payload;
@@ -221,14 +223,35 @@ app.post('/webhooks/zoho-sign', (req, res) => {
 
   const requestInfo = payload.requests || payload.request || payload;
 
-  broadcastEvent({
+  const recipients = (requestInfo.actions || [])
+    .filter((a) => a.action_type === 'SIGN')
+    .map((a) => ({ name: a.recipient_name, status: a.action_status }));
+
+  const event = {
     type: 'webhook',
     requestId: requestInfo.request_id,
     requestName: requestInfo.request_name,
     requestStatus: requestInfo.request_status,
+    recipients,
     time: Date.now(),
-    payload,
-  });
+  };
+
+  // Zoho can call this more than once for what amounts to the same
+  // observable state (retries, or a callback that doesn't change any
+  // recipient's status from what we last saw for this request) - skip
+  // re-broadcasting an identical snapshot so the live feed doesn't fill
+  // up with visually duplicate entries.
+  const lastForThisRequest = recentEvents.find(
+    (e) => e.type === 'webhook' && e.requestId === event.requestId
+  );
+  const isDuplicate =
+    lastForThisRequest &&
+    lastForThisRequest.requestStatus === event.requestStatus &&
+    JSON.stringify(lastForThisRequest.recipients) === JSON.stringify(event.recipients);
+
+  if (!isDuplicate) {
+    broadcastEvent(event);
+  }
 
   // Zoho expects a 200 quickly, or it will retry.
   res.status(200).json({ status: 'success' });
