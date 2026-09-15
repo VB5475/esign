@@ -11,6 +11,10 @@ const lookupBtn = document.getElementById('lookupBtn');
 const lookupId = document.getElementById('lookupId');
 const lookupResult = document.getElementById('lookupResult');
 
+const recipientList = document.getElementById('recipientList');
+const addRecipientBtn = document.getElementById('addRecipientBtn');
+const isSequentialInput = document.getElementById('isSequential');
+
 function setStage(stage) {
   const order = ['upload', 'send', 'track'];
   const idx = order.indexOf(stage);
@@ -19,6 +23,42 @@ function setStage(stage) {
     li.classList.toggle('done', i < idx);
   });
 }
+
+// --- Multi-recipient rows ---
+function addRecipientRow(name = '', email = '') {
+  const row = document.createElement('div');
+  row.className = 'recipient-row';
+  row.innerHTML = `
+    <span class="recipient-order"></span>
+    <input type="text" class="recipient-name-input" placeholder="Recipient name" value="${name}" required />
+    <input type="email" class="recipient-email-input" placeholder="recipient@example.com" value="${email}" required />
+    <button type="button" class="remove-recipient-btn" title="Remove recipient">&times;</button>
+  `;
+  row.querySelector('.remove-recipient-btn').addEventListener('click', () => {
+    row.remove();
+    renumberRecipients();
+  });
+  recipientList.appendChild(row);
+  renumberRecipients();
+}
+
+function renumberRecipients() {
+  const rows = [...recipientList.querySelectorAll('.recipient-row')];
+  rows.forEach((row, i) => {
+    row.querySelector('.recipient-order').textContent = i + 1;
+    row.querySelector('.remove-recipient-btn').disabled = rows.length === 1;
+  });
+}
+
+function getRecipients() {
+  return [...recipientList.querySelectorAll('.recipient-row')].map((row) => ({
+    name: row.querySelector('.recipient-name-input').value.trim(),
+    email: row.querySelector('.recipient-email-input').value.trim(),
+  }));
+}
+
+addRecipientBtn.addEventListener('click', () => addRecipientRow());
+addRecipientRow(); // start with one row
 
 // --- File picker label ---
 fileInput.addEventListener('change', () => {
@@ -72,6 +112,12 @@ form.addEventListener('submit', async (e) => {
 
   if (!fileInput.files[0]) return;
 
+  const recipients = getRecipients();
+  if (recipients.some((r) => !r.name || !r.email)) {
+    showStatus('error', 'Every recipient needs a name and an email.');
+    return;
+  }
+
   setStage('send');
   submitBtn.disabled = true;
   submitBtn.textContent = 'Sending…';
@@ -79,8 +125,8 @@ form.addEventListener('submit', async (e) => {
 
   const body = new FormData();
   body.append('file', fileInput.files[0]);
-  body.append('recipientName', document.getElementById('recipientName').value);
-  body.append('recipientEmail', document.getElementById('recipientEmail').value);
+  body.append('recipients', JSON.stringify(recipients));
+  body.append('isSequential', isSequentialInput.checked);
   body.append('requestName', document.getElementById('requestName').value);
   body.append('notes', document.getElementById('notes').value);
   body.append('testing', document.getElementById('testing').checked);
@@ -91,9 +137,12 @@ form.addEventListener('submit', async (e) => {
 
     if (json.status === 'success') {
       setStage('track');
+      const order = recipients.length > 1 && isSequentialInput.checked
+        ? ` (signing order: ${recipients.map((r) => r.name).join(' → ')})`
+        : '';
       showStatus(
         'success',
-        `Sent. Request ID: ${json.request_id}\nStatus: ${json.request_status}\n\nPaste the request ID on the right to check on it later.`
+        `Sent. Request ID: ${json.request_id}\nStatus: ${json.request_status}${order}\n\nPaste the request ID on the right to check on it later.`
       );
       lookupId.value = json.request_id;
       loadDashboard();
@@ -225,3 +274,77 @@ async function loadDashboard() {
 
 refreshDashboardBtn.addEventListener('click', loadDashboard);
 loadDashboard();
+
+// --- Live activity feed (Server-Sent Events) ---
+// This is additive to polling, not a replacement: loadDashboard() above
+// still works via manual Refresh / after each send regardless of this
+// connection's state. This just pushes instant updates on top when the
+// server broadcasts something (e.g. a Zoho webhook came in).
+const liveDot = document.getElementById('liveDot');
+const liveFeedList = document.getElementById('liveFeedList');
+
+function renderFeedItem(event) {
+  const div = document.createElement('div');
+  div.className = 'live-feed-item';
+
+  let title;
+  if (event.type === 'request_sent') {
+    title = `Sent “${event.requestName}” to ${event.recipients.join(', ')}`;
+  } else if (event.type === 'webhook') {
+    title = `Update: “${event.requestName || event.requestId}” → ${event.requestStatus || 'status changed'}`;
+  } else {
+    title = 'Activity received';
+  }
+
+  const time = event.time ? new Date(event.time).toLocaleTimeString() : '';
+  div.innerHTML = `<span class="feed-title">${title}</span><span class="feed-time">${time}</span>`;
+  return div;
+}
+
+function addFeedItem(event) {
+  const empty = liveFeedList.querySelector('.live-feed-empty');
+  if (empty) empty.remove();
+  liveFeedList.prepend(renderFeedItem(event));
+  // If a webhook event arrives, the underlying data changed - refresh the grid.
+  if (event.type === 'webhook') loadDashboard();
+}
+
+function connectLiveFeed() {
+  let source;
+  try {
+    source = new EventSource('/api/events');
+  } catch (e) {
+    liveDot.classList.add('disconnected');
+    liveDot.title = 'Live updates unavailable';
+    return;
+  }
+
+  source.onopen = () => {
+    liveDot.classList.remove('disconnected');
+    liveDot.classList.add('connected');
+    liveDot.title = 'Live updates connected';
+  };
+
+  source.onerror = () => {
+    liveDot.classList.remove('connected');
+    liveDot.classList.add('disconnected');
+    liveDot.title = 'Reconnecting…';
+    // The browser's EventSource auto-reconnects on its own; polling via
+    // the Refresh button and the post-send refresh still work regardless.
+  };
+
+  source.onmessage = (msg) => {
+    try {
+      const data = JSON.parse(msg.data);
+      if (data.type === 'hello') {
+        (data.recent || []).slice(0, 10).reverse().forEach(addFeedItem);
+      } else {
+        addFeedItem(data);
+      }
+    } catch (e) {
+      // ignore malformed events
+    }
+  };
+}
+
+connectLiveFeed();

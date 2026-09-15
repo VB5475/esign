@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -13,6 +14,15 @@ const PORT = process.env.PORT || 3000;
 
 // --- Middleware ---
 app.use(cors());
+
+// The webhook route needs the raw body (to verify Zoho's signature, if
+// configured), so it's registered with express.raw() before the global
+// express.json() parser would otherwise consume the body.
+app.use(
+  '/webhooks/zoho-sign',
+  express.raw({ type: '*/*', limit: '2mb' })
+);
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -31,6 +41,50 @@ const upload = multer({
   },
 });
 
+// ---------------------------------------------------------------------
+// Live notifications (Server-Sent Events)
+//
+// Polling (GET /api/dashboard) still works exactly as before - this adds
+// a push layer on top so the browser updates instantly when Zoho notifies
+// us via webhook, instead of waiting for the next manual/periodic refresh.
+// ---------------------------------------------------------------------
+
+const sseClients = new Set();
+const recentEvents = []; // small in-memory ring buffer, newest first
+const MAX_RECENT_EVENTS = 50;
+
+function broadcastEvent(event) {
+  recentEvents.unshift(event);
+  if (recentEvents.length > MAX_RECENT_EVENTS) recentEvents.length = MAX_RECENT_EVENTS;
+
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const client of sseClients) {
+    client.write(payload);
+  }
+}
+
+app.get('/api/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.flushHeaders();
+
+  // Replay recent history so a client that just connected isn't blank.
+  res.write(`data: ${JSON.stringify({ type: 'hello', recent: recentEvents })}\n\n`);
+
+  sseClients.add(res);
+
+  // Keep the connection alive through proxies/load balancers.
+  const keepAlive = setInterval(() => res.write(':ping\n\n'), 25000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    sseClients.delete(res);
+  });
+});
+
 // --- Routes ---
 
 /**
@@ -46,14 +100,20 @@ app.get('/api/health', async (req, res) => {
 });
 
 /**
- * Upload a PDF + recipient info, and send it out for signature in one go.
+ * Upload a PDF + one or more recipients, and send it out for signature.
  * multipart/form-data fields:
- *   file            - the PDF (required)
- *   recipientName   - string (required)
- *   recipientEmail  - string (required)
- *   requestName     - string (optional)
- *   notes           - string (optional)
- *   testing         - "true"/"false" (optional, uses Zoho's free test mode)
+ *   file        - the PDF (required)
+ *   recipients  - JSON string: [{ name, email }, ...] (required, at least one)
+ *                 Order in the array = signing order when isSequential is true.
+ *   requestName - string (optional)
+ *   notes       - string (optional)
+ *   isSequential- "true"/"false" (optional, default true) - true means
+ *                 recipient 2 only gets notified after recipient 1 signs;
+ *                 Zoho handles that chaining entirely on its own.
+ *   testing     - "true"/"false" (optional, uses Zoho's free test mode)
+ *
+ * For backward compatibility, recipientName/recipientEmail (singular) are
+ * still accepted as a fallback if `recipients` isn't provided.
  */
 app.post('/api/send', upload.single('file'), async (req, res) => {
   const filePath = req.file && req.file.path;
@@ -63,24 +123,45 @@ app.post('/api/send', upload.single('file'), async (req, res) => {
       return res.status(400).json({ status: 'failure', message: 'A PDF file is required.' });
     }
 
-    const { recipientName, recipientEmail, requestName, notes, testing } = req.body;
+    const { recipientName, recipientEmail, requestName, notes, testing, isSequential } = req.body;
 
-    if (!recipientName || !recipientEmail) {
-      return res
-        .status(400)
-        .json({ status: 'failure', message: 'recipientName and recipientEmail are required.' });
+    let recipients = [];
+    if (req.body.recipients) {
+      try {
+        recipients = JSON.parse(req.body.recipients);
+      } catch (e) {
+        return res
+          .status(400)
+          .json({ status: 'failure', message: 'recipients must be a valid JSON array.' });
+      }
+    } else if (recipientName && recipientEmail) {
+      recipients = [{ name: recipientName, email: recipientEmail }];
     }
 
-    const result = await zoho.createAndSubmit(
-      filePath,
-      [{ name: recipientName, email: recipientEmail }],
-      {
-        requestName: requestName || req.file.originalname,
-        notes: notes || 'Please sign this document',
-        testing: testing === 'true' || testing === true,
-        fileName: req.file.originalname,
-      }
-    );
+    recipients = (recipients || []).filter((r) => r && r.name && r.email);
+
+    if (recipients.length === 0) {
+      return res.status(400).json({
+        status: 'failure',
+        message: 'At least one recipient with a name and email is required.',
+      });
+    }
+
+    const result = await zoho.createAndSubmit(filePath, recipients, {
+      requestName: requestName || req.file.originalname,
+      notes: notes || 'Please sign this document',
+      testing: testing === 'true' || testing === true,
+      isSequential: isSequential === undefined ? true : isSequential === 'true' || isSequential === true,
+      fileName: req.file.originalname,
+    });
+
+    broadcastEvent({
+      type: 'request_sent',
+      requestId: result.requests.request_id,
+      requestName: result.requests.request_name,
+      recipients: recipients.map((r) => r.name),
+      time: Date.now(),
+    });
 
     res.json({
       status: 'success',
@@ -99,6 +180,58 @@ app.post('/api/send', upload.single('file'), async (req, res) => {
     // Clean up the temp upload regardless of outcome.
     if (filePath) fs.unlink(filePath, () => {});
   }
+});
+
+/**
+ * Receives real-time notifications from Zoho Sign when you configure a
+ * webhook URL pointing here (Zoho Sign > Settings > look for a Webhooks /
+ * Integrations section - as of this writing Zoho Sign doesn't document a
+ * REST endpoint to register the webhook via API, only through the
+ * dashboard). Needs a public HTTPS URL to actually receive traffic from
+ * Zoho's servers - won't get hit on localhost without a tunnel like ngrok.
+ *
+ * We don't assume Zoho's exact payload shape here since it isn't fully
+ * published - this pulls out whatever recognizable fields are present and
+ * passes the rest through untouched, so nothing breaks if the shape
+ * differs from what's expected.
+ */
+app.post('/webhooks/zoho-sign', (req, res) => {
+  let payload;
+  try {
+    payload = JSON.parse(req.body.toString('utf8'));
+  } catch (e) {
+    payload = { raw: req.body.toString('utf8') };
+  }
+
+  // Optional signature verification: set ZOHO_WEBHOOK_SECRET in .env if
+  // your Zoho Sign webhook config provides a signing secret, and this
+  // will reject anything that doesn't match instead of trusting it blindly.
+  if (process.env.ZOHO_WEBHOOK_SECRET) {
+    const signature = req.get('x-zsign-webhook-signature') || req.get('x-webhook-signature');
+    const expected = crypto
+      .createHmac('sha256', process.env.ZOHO_WEBHOOK_SECRET)
+      .update(req.body)
+      .digest('hex');
+
+    if (!signature || signature !== expected) {
+      console.warn('Rejected webhook: signature mismatch.');
+      return res.status(401).json({ status: 'failure', message: 'Invalid signature.' });
+    }
+  }
+
+  const requestInfo = payload.requests || payload.request || payload;
+
+  broadcastEvent({
+    type: 'webhook',
+    requestId: requestInfo.request_id,
+    requestName: requestInfo.request_name,
+    requestStatus: requestInfo.request_status,
+    time: Date.now(),
+    payload,
+  });
+
+  // Zoho expects a 200 quickly, or it will retry.
+  res.status(200).json({ status: 'success' });
 });
 
 /**

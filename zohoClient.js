@@ -183,17 +183,58 @@ async function createRequest(filePath, options = {}) {
 /**
  * Step 2 - Submit the request: this is what actually emails the recipient(s).
  * recipients: [{ name, email }]
+ * options.documentId - required for signers to get a placed field (see
+ *   below) - pass the document_id returned from createRequest().
+ * options.pageNo - which page (0-indexed) to place the signature field on;
+ *   defaults to the last page of the document.
+ *
+ * Zoho requires every SIGN recipient to have at least one field placed on
+ * the document before you can submit - otherwise it rejects with error
+ * 9101 "Add atleast one field for a signer." This auto-places a single
+ * Signature field for each recipient, stacked vertically so multiple
+ * signers on the same document don't overlap. Coordinates are measured
+ * from the top-left corner of the page, in points (a US Letter page is
+ * roughly 612x792pt) - adjust FIELD_X / FIELD_Y_START if your documents
+ * use a different page size or you want the field positioned elsewhere.
  */
-async function submitRequest(requestId, recipients, options = {}) {
-  const { testing = false } = options;
+const FIELD_X = 380;
+const FIELD_Y_START = 640;
+const FIELD_Y_STEP = 70;
+const FIELD_WIDTH = 160;
+const FIELD_HEIGHT = 40;
 
-  const actions = recipients.map((r, index) => ({
-    action_type: 'SIGN',
-    recipient_name: r.name,
-    recipient_email: r.email,
-    verify_recipient: false,
-    signing_order: index,
-  }));
+async function submitRequest(requestId, recipients, options = {}) {
+  const { testing = false, documentId, pageNo } = options;
+
+  const actions = recipients.map((r, index) => {
+    const action = {
+      action_type: 'SIGN',
+      recipient_name: r.name,
+      recipient_email: r.email,
+      verify_recipient: false,
+      signing_order: index,
+    };
+
+    if (documentId) {
+      action.fields = [
+        {
+          field_name: `Signature-${index + 1}`,
+          field_label: 'Signature',
+          field_type_name: 'Signature',
+          field_category: 'image',
+          document_id: documentId,
+          page_no: pageNo != null ? pageNo : 0,
+          x_coord: FIELD_X,
+          y_coord: FIELD_Y_START + index * FIELD_Y_STEP,
+          abs_width: FIELD_WIDTH,
+          abs_height: FIELD_HEIGHT,
+          is_mandatory: true,
+        },
+      ];
+    }
+
+    return action;
+  });
 
   const data = { requests: { actions } };
 
@@ -221,7 +262,22 @@ async function createAndSubmit(filePath, recipients, options = {}) {
   }
 
   const requestId = createResp.requests.request_id;
-  const submitResp = await submitRequest(requestId, recipients, options);
+
+  // The uploaded file's document_id is required to place a signature field
+  // on it - without this, Zoho rejects submission with error 9101
+  // ("Add atleast one field for a signer"). Default to placing the field
+  // on the last page of the document.
+  const documentInfo =
+    createResp.requests.document_ids && createResp.requests.document_ids[0];
+  const documentId = documentInfo && documentInfo.document_id;
+  const totalPages = documentInfo && documentInfo.total_pages;
+  const lastPageIndex = totalPages ? totalPages - 1 : 0;
+
+  const submitResp = await submitRequest(requestId, recipients, {
+    ...options,
+    documentId,
+    pageNo: lastPageIndex,
+  });
 
   if (submitResp.status !== 'success') {
     const err = new Error('Zoho Sign: failed to submit request');

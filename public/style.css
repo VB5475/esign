@@ -213,6 +213,122 @@ textarea { resize: vertical; }
 
 .checkbox input { margin-top: 3px; }
 
+/* Multi-recipient list */
+.recipients-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sequential-toggle {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 8px 10px;
+}
+
+.recipient-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.recipient-row {
+  display: grid;
+  grid-template-columns: 22px 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 560px) {
+  .recipient-row { grid-template-columns: 22px 1fr auto; }
+  .recipient-row .recipient-email-input { grid-column: 2 / 3; }
+}
+
+.recipient-order {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--seal);
+  color: var(--paper-raised);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.recipient-row input {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.remove-recipient-btn {
+  background: transparent;
+  border: none;
+  color: var(--clay);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.remove-recipient-btn:disabled {
+  color: var(--rule);
+  cursor: not-allowed;
+}
+
+.add-recipient-btn {
+  width: auto;
+}
+
+/* Live activity feed */
+.live-feed {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+}
+
+.live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rule);
+  margin-left: 4px;
+}
+
+.live-dot.connected { background: var(--seal); }
+.live-dot.disconnected { background: var(--clay); }
+
+.live-feed-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.live-feed-empty {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.live-feed-item {
+  font-size: 12px;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--seal);
+  border-radius: 3px;
+}
+
+.live-feed-item .feed-title { display: block; font-weight: 500; color: var(--ink); }
+.live-feed-item .feed-time { display: block; color: var(--ink-soft); margin-top: 2px; }
+
 button {
   font-family: inherit;
   border: none;

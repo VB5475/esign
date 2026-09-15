@@ -56,20 +56,37 @@ Open **http://localhost:3000**.
 
 ## 3. Using the demo
 
-- Upload any PDF, fill in a recipient name/email, and click **Send for signature**.
+- Upload any PDF, add one or more recipients, and click **Send for signature**.
+  - **Multiple recipients**: click "+ Add another recipient" to add more. With **"Sign in order"** checked (the default), Zoho handles sequential signing natively — recipient 2 isn't notified at all until recipient 1 finishes signing. This is entirely Zoho's behavior once `is_sequential: true` and each recipient's `signing_order` is set; nothing on this server drives that chaining.
 - Leave **"Use Zoho's free test mode"** checked to send up to 50 test envelopes per month for free — these carry a "Powered by Zoho Sign — for testing purposes only" watermark and aren't legally binding. Uncheck it once you're ready to send real requests (this consumes Zoho Sign credits).
 - After sending, the request ID appears — paste it into **Check a request's status** on the right to poll Zoho for the latest state (sent, viewed, signed, declined, etc).
 - Below the form, the **Tracking** panel shows every document you've sent, pulled live from Zoho: total sent, how many recipients have signed, how many are still pending, and how many declined, plus a per-recipient grid with status and progress. It refreshes automatically after each send, or click **Refresh** any time. This reads directly from Zoho's `GET /requests` endpoint each time — there's no local database, so it's always accurate, but very large accounts (200+ requests) are capped to the most recent 200 for the demo.
+
+## Real-time notifications (webhook + live feed)
+
+The polling above (Refresh button, refresh-after-send) still works exactly the same and needs no setup. On top of that, there's an optional push layer:
+
+- **`POST /webhooks/zoho-sign`** — a receiver endpoint that Zoho Sign can call the instant something happens to a document (viewed, signed, declined, completed), instead of you having to poll for it.
+- **`GET /api/events`** — a Server-Sent Events stream the browser subscribes to. When the webhook receives something, it's broadcast here instantly, and the **"Live activity"** panel in the sidebar updates in real time and auto-refreshes the tracking grid.
+
+**To actually receive webhook calls from Zoho, you need:**
+1. A public HTTPS URL pointing at this server (Zoho's servers can't reach `localhost` — use a tunnel like [ngrok](https://ngrok.com) for local testing: `ngrok http 3000`, then use the `https://...ngrok-free.app/webhooks/zoho-sign` URL it gives you).
+2. Register that URL in your Zoho Sign account. As of writing, Zoho Sign doesn't document a REST API to register webhooks (unlike some other Zoho products) — look under **Settings** in Zoho Sign for a Webhooks/Integrations section, or check current Zoho Sign documentation, since this can change.
+3. (Optional) If Zoho Sign gives you a signing secret for the webhook, set `ZOHO_WEBHOOK_SECRET` in `.env` — the receiver will then verify each incoming payload's signature and reject anything that doesn't match, instead of trusting requests blindly.
+
+Without any of that set up, the app still works exactly as before — you just won't see anything in the Live activity panel until either you send a document (which the server always broadcasts itself) or a real webhook call comes in.
 
 ## API routes exposed by this server
 
 | Method | Path                  | Description                                              |
 |--------|-----------------------|------------------------------------------------------------|
 | GET    | `/api/health`         | Verifies your Zoho credentials can produce an access token |
-| POST   | `/api/send`            | multipart form: `file`, `recipientName`, `recipientEmail`, `requestName`, `notes`, `testing` → creates + submits a request |
+| POST   | `/api/send`            | multipart form: `file`, `recipients` (JSON array of `{name, email}`), `isSequential`, `requestName`, `notes`, `testing` → creates + submits a request |
 | GET    | `/api/requests/:id`   | Fetches status/details for a request                       |
 | GET    | `/api/requests`        | Lists requests (support depends on your Zoho Sign plan)   |
 | GET    | `/api/dashboard`       | Summary counts (sent/signed/pending/declined) + a flat per-recipient grid, for the Tracking panel |
+| GET    | `/api/events`          | Server-Sent Events stream for the Live activity panel        |
+| POST   | `/webhooks/zoho-sign`  | Receiver for Zoho Sign webhook notifications (needs a public URL + registration in Zoho Sign, see above) |
 
 ## Notes / things to adapt for a real deployment
 

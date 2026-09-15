@@ -45,15 +45,18 @@
           </div>
         </div>
 
-        <div class="field-row">
-          <div class="field">
-            <label for="recipientName">Recipient name</label>
-            <input type="text" id="recipientName" required placeholder="Jordan Blake" />
+        <div class="field">
+          <div class="recipients-head">
+            <label>Recipients</label>
+            <label class="checkbox sequential-toggle">
+              <input type="checkbox" id="isSequential" checked />
+              <span>Sign in order (each recipient is notified only after the one before them signs)</span>
+            </label>
           </div>
-          <div class="field">
-            <label for="recipientEmail">Recipient email</label>
-            <input type="email" id="recipientEmail" required placeholder="jordan@example.com" />
+          <div id="recipientList" class="recipient-list">
+            <!-- recipient rows injected by app.js -->
           </div>
+          <button type="button" id="addRecipientBtn" class="ghost-btn add-recipient-btn">+ Add another recipient</button>
         </div>
 
         <div class="field">
@@ -76,7 +79,7 @@
 
     <aside class="panel side-panel">
       <h2>How this works</h2>
-      <p class="side-copy">This demo calls the Zoho Sign API in two steps, same as the docs describe: it uploads your PDF to create a request, then submits that request with a recipient to send the signing email.</p>
+      <p class="side-copy">This demo calls the Zoho Sign API in two steps, same as the docs describe: it uploads your PDF to create a request, then submits that request with your recipients to send the signing email. With sequential signing on, Zoho itself notifies each recipient only once the one before them has signed — nothing on this server drives that chaining.</p>
 
       <div class="lookup">
         <h3>Check a request's status</h3>
@@ -85,6 +88,13 @@
           <button id="lookupBtn" type="button">Check</button>
         </div>
         <pre id="lookupResult" class="lookup-result" hidden></pre>
+      </div>
+
+      <div class="live-feed">
+        <h3>Live activity <span id="liveDot" class="live-dot" title="Connecting…"></span></h3>
+        <div id="liveFeedList" class="live-feed-list">
+          <p class="live-feed-empty">No activity yet.</p>
+        </div>
       </div>
 
       <div class="server-note">
